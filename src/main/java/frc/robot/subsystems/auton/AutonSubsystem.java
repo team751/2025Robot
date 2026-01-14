@@ -21,6 +21,31 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Manages autonomous routines using Choreo for trajectory generation.
+ *
+ * <p>TWO AUTONOMOUS PATTERNS USED:
+ *
+ * <p>1. PURE TRAJECTORY FOLLOWING (see getAuton()):
+ * - Loads pre-planned Choreo paths from deploy/choreo/*.traj
+ * - Splits multi-segment paths at stop points
+ * - Resets odometry at start
+ * - No game-specific actions (testing/reference only)
+ *
+ * <p>2. DYNAMIC PATHFINDING (see getBlueRight(), etc.):
+ * - Uses AssistCommand for on-the-fly navigation to GameElements
+ * - PathPlanner's LocalADStar generates paths at runtime
+ * - Integrates game actions (score, intake) with navigation
+ * - ACTUALLY USED IN COMPETITION
+ *
+ * <p>Competition routines combine:
+ * - AssistCommand(GameElement, Branch) → Navigate to field location
+ * - ScoreCommand/IntakeCommand → Game-specific mechanism actions
+ * - Commands.race() → Timeout wrapper for safety
+ *
+ * <p>The GameElement enum (6 reef sides, coral stations) provides semantic targets
+ * without hard-coding coordinates in autonomous routines.
+ */
 public class AutonSubsystem {
 private final AutoChooser autoChooser = new AutoChooser();
 
@@ -63,16 +88,29 @@ public Command getSelectedAuton() {
 	return autoChooser.selectedCommand();
 }
 
+/**
+ * Generic trajectory follower for pre-planned Choreo paths.
+ *
+ * <p>Loads a Choreo trajectory by name from deploy/choreo/{name}.traj
+ * Handles multi-segment paths (split at stop points in Choreo).
+ *
+ * <p>NOTE: Not used in competition routines - competition uses dynamic pathfinding
+ * with AssistCommand instead. This is kept for testing/reference.
+ *
+ * @param name Name of the Choreo trajectory file (without .traj extension)
+ * @return AutoRoutine that follows all segments of the path
+ */
 private AutoRoutine getAuton(String name) {
 	AutoRoutine routine = autoFactory.newRoutine(name);
 	List<Command> commandList = new ArrayList<>();
 
+	// Load all trajectory segments (Choreo splits paths at stop points)
 	int index = 0;
 	while (true) {
 	AutoTrajectory trajectory = routine.trajectory(name, index);
-	if (trajectory.getFinalPose().equals(Optional.empty())) break;
-	if (index == 0) commandList.add(trajectory.resetOdometry());
-	commandList.add(trajectory.cmd());
+	if (trajectory.getFinalPose().equals(Optional.empty())) break;  // No more segments
+	if (index == 0) commandList.add(trajectory.resetOdometry());  // Reset on first segment only
+	commandList.add(trajectory.cmd());  // Follow this segment
 
 	// commandList.add(new AssistCommand(false, true));
 	// commandList.add(new WaitCommand(1));
@@ -84,13 +122,29 @@ private AutoRoutine getAuton(String name) {
 	return routine;
 }
 
+/**
+ * Blue alliance autonomous starting from right side of field.
+ *
+ * <p>PATTERN: Navigate → Score → Navigate → Intake → Navigate → Score
+ *
+ * <p>Uses dynamic pathfinding (AssistCommand) rather than pre-planned Choreo paths.
+ * AssistCommand generates paths on-the-fly using PathPlanner's LocalADStar algorithm.
+ *
+ * <p>Commands.race() provides timeout safety - game action completes OR timeout expires.
+ * Prevents autonomous from hanging if a mechanism fails.
+ *
+ * <p>Note: Reef sides (REEF_BLUE_2, REEF_BLUE_4) are separate GameElements from the
+ * hexagonal reef structure. Robot picks specific side to approach based on starting position.
+ */
 private AutoRoutine getBlueRight() {
 	AutoRoutine routine = autoFactory.newRoutine("blueright");
 	List<Command> commandList = new ArrayList<>();
 
+	// Score preloaded coral on reef
 	commandList.add(new AssistCommand(GameElement.REEF_BLUE_2, GameElement.Branch.LEFT));
 	commandList.add(Commands.race(new ScoreCommand(ScoreCommand.Level.L4), new WaitCommand(5)));
 
+	// Pick up coral from human player station
 	commandList.add(new AssistCommand(GameElement.CORAL_STATION_BLUE_1, null));
 	commandList.add(Commands.race(new IntakeCommand(), new WaitCommand(10)));
 	// commandList.add(new WaitCommand(5));

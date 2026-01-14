@@ -7,6 +7,23 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * Field geometry constants for the 2025 FRC game (REEFSCAPE).
+ *
+ * <p>IMPORTANT: GameElement represents FIELD COMPONENTS (fixed locations), NOT game pieces.
+ * - Field components: Reefs, Coral Stations, Cages, Processors (defined here)
+ * - Game pieces: Coral and Algae (tracked via vision/sensors, not in this enum)
+ *
+ * <p>REEF ARCHITECTURE: Each hexagonal reef is modeled as 6 separate GameElement entries.
+ * This enables:
+ * - Intelligent approach selection (robot picks best side based on position/obstacles)
+ * - Ray-casting obstacle avoidance (see Odometry.TargetPredictor)
+ * - Angle-aware navigation (each side has heading: 0°, 60°, 120°, 180°, 240°, 300°)
+ * - Branch-based scoring (left/mid/right positions on each side)
+ *
+ * <p>Coordinate system: Origin at blue alliance lower-left, units in meters,
+ * X increases toward red alliance, Y increases toward drivers' left.
+ */
 public class FieldConstants {
   public static final double EPSILON = 1e-6;
   public static final double CORAL_OFFSET = 0.2; ///0.206; // meters
@@ -17,8 +34,14 @@ public class FieldConstants {
 // origin.
 // everything is in meters
 
+/**
+ * Fixed field locations for autonomous navigation.
+ *
+ * <p>Each hexagonal reef has 6 sides (REEF_RED_1 through REEF_RED_6, same for blue).
+ * This split enables intelligent side selection based on robot position and obstacles.
+ */
 public enum GameElement {
-	// Reefs (6 parts per reef)
+	// Reefs (6 sides per hexagonal reef)
 	REEF_RED_1(
 		new Branches(
 			offsetByAngle(
@@ -239,6 +262,14 @@ public enum GameElement {
 	return String.format("%s [Pose=%s, isBlue=%b]", name(), center, isBlue);
 	}
 
+	/**
+	 * Scoring positions on a reef side.
+	 *
+	 * <p>Each reef side has 3 branches offset perpendicular from the center AprilTag:
+	 * - Left: 90° left of the side's heading
+	 * - Mid: Directly at the center
+	 * - Right: 90° right of the side's heading
+	 */
 	public record Branches(Pose2d left, Pose2d mid, Pose2d right) {
 	public Branches {
 		if (left == null || mid == null || right == null)
@@ -265,6 +296,17 @@ public static double normalizeAngle(double angle) {
 	return angle;
 }
 
+/**
+ * Calculates a pose offset at an angle from a center pose.
+ *
+ * <p>Used to create branch positions perpendicular to reef sides.
+ * Common usage: offsetByAngle(reefCenter, 0.2, ±90) for left/right branches.
+ *
+ * @param center Base pose to offset from
+ * @param offsetMeters Distance to offset
+ * @param angleOffsetDegrees Angle relative to center's heading (90 = perpendicular left)
+ * @return New pose at the offset position with same heading as center
+ */
 public static Pose2d offsetByAngle(
 	Pose2d center, double offsetMeters, double angleOffsetDegrees) {
 	// "angleOffsetDegrees" is usually +-90 for this perpendicular offset

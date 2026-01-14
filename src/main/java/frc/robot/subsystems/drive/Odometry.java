@@ -298,6 +298,21 @@ public static class RobotState {
 }
 
 
+  /**
+   * Advanced target prediction system with motion awareness and obstacle avoidance.
+   *
+   * <p>This is the primary gameplay logic for autonomous target selection. It considers:
+   * 1. FORCED SELECTION: When within 0.5m and inside a 42° cone → lock to that reef side
+   * 2. OBSTACLE AVOIDANCE: Ray-casting to exclude targets blocked by reef walls
+   * 3. MOTION-AWARE COST: Prefers targets aligned with current velocity (less energy to reach)
+   * 4. GAME STATE BIASING: Coral detected → prefer reefs (0.8x cost), Empty → prefer stations (0.57x cost)
+   * 5. HYSTERESIS: Confidence builds/decays to prevent target flickering during navigation
+   *
+   * <p>The reef being split into 6 sides per hexagon is CRITICAL for this system:
+   * - Each side is a separate target with its own wall for obstruction checks
+   * - Forced selection cone locks to specific sides when approaching
+   * - Robot intelligently picks best approach angle
+   */
   public static class TargetPredictor {
 
     public static boolean ALLIANCE_IS_BLUE =
@@ -326,10 +341,11 @@ public static class RobotState {
     // Kinetic-energy penalty weight
     private static final double ENERGY_COST_WEIGHT = 0.4;
 
-    // Each reef (a GameElement with branches) has a wall extended on each side
-    // from the central AprilTag
+    // Each reef SIDE (a GameElement with branches) has a virtual wall perpendicular to its face.
+    // This wall is used for ray-casting obstacle detection to prevent driving through reefs.
+    // The reef's 6 sides create 6 separate walls that can block paths to other targets.
     private static final double WALL_EXTENSION =
-        0.875; // actual reef wall half-length // old = 0.825 length
+        0.875; // actual reef wall half-length in meters // old = 0.825 length
 
     public static class PredictionResult {
       private final GameElement target;
@@ -455,6 +471,20 @@ public static class RobotState {
       return new PredictionResult(lastPredictedTarget, targetConfidence, bestCost);
     }
 
+    /**
+     * Checks if robot is close enough to a reef side to force-lock to that target.
+     *
+     * <p>When robot is:
+     * - Within FORCE_SELECTION_RADIUS (0.5m) of a reef side, AND
+     * - Inside a cone of FORCE_SELECTION_CONE_HALF_ANGLE (42°) in front of that side
+     *
+     * <p>Then that side is automatically selected with 100% confidence. This prevents the robot
+     * from switching targets mid-approach when it's already committed to scoring on a specific
+     * reef side.
+     *
+     * @param pose Current robot pose
+     * @return Forced target if within cone, null otherwise
+     */
     private static GameElement getForcedConeTarget(Pose2d pose) {
       Translation2d robotTranslation = pose.getTranslation();
       double robotX = robotTranslation.getX();
@@ -491,9 +521,25 @@ public static class RobotState {
       return forcedTarget;
     }
 
+    /**
+     * Checks if a straight-line path is blocked by any reef wall.
+     *
+     * <p>Each reef side creates a virtual wall perpendicular to its face (WALL_EXTENSION meters
+     * on each side of the AprilTag). This method tests if the ray from robot to target
+     * intersects any of these walls.
+     *
+     * <p>WHY THIS MATTERS: Prevents robot from trying to drive through the reef hexagon
+     * to reach a target on the other side. Forces selection of unobstructed reef sides.
+     *
+     * @param rayStart Robot position
+     * @param rayEnd Target element position
+     * @param candidate Target being tested (don't check obstruction by itself)
+     * @return true if path is blocked by a reef wall
+     */
     private static boolean isRayObstructed(
         Translation2d rayStart, Translation2d rayEnd, GameElement candidate) {
       for (GameElement element : GameElement.values()) {
+        // Only reef sides (hasBranches) create walls
         if (element.hasBranches() && !element.equals(candidate)) {
           Pose2d reefPose = element.getLocation();
           Translation2d reefTranslation = reefPose.getTranslation();
@@ -580,8 +626,15 @@ public static class RobotState {
    * Finds the closest GameElement to a given robot pose. If two elements are equidistant, the one
    * with the smallest angle difference is chosen.
    *
+   * <p>NOTE: This is a simple utility method NOT used by the main target prediction system.
+   * See TargetPredictor.predictTargetElement() for the actual gameplay logic which includes:
+   * - Obstacle avoidance (ray-casting through reef walls)
+   * - Motion-aware scoring (considers velocity and direction)
+   * - Game state biasing (prefers reefs when holding coral, stations when empty)
+   * - Confidence/hysteresis to prevent target flickering
+   *
    * @param robotPose The current Pose2d of the robot.
-   * @return The closest GameElement.
+   * @return The closest GameElement by Euclidean distance.
    */
   public static GameElement closestElement(Pose2d robotPose) {
     GameElement closest = null;
